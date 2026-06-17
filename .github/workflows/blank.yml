@@ -1,4 +1,3 @@
-```yaml
 name: M1 MLX vs Metal benchmark
 
 on:
@@ -96,4 +95,3 @@ jobs:
           path: |
             llama_metal.json
             mlx_metal.json
-```
