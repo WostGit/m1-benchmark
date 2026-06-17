@@ -1,15 +1,23 @@
-name: M1 MLX vs Metal benchmark
+name: Apple Silicon CI smoke test
 
 on:
   workflow_dispatch:
 
 jobs:
-  bench:
+  smoke-test:
     runs-on: macos-14
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Show hardware metadata
+        run: |
+          mkdir -p results
+          system_profiler SPHardwareDataType | tee results/hardware.txt
+          system_profiler SPDisplaysDataType | tee results/display.txt
+          sw_vers | tee results/macos.txt
+          uname -a | tee results/uname.txt
 
       - name: Install dependencies
         run: |
@@ -20,11 +28,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install huggingface_hub mlx mlx-lm
 
-      - name: Build llama.cpp Metal
+      - name: Build llama.cpp Metal minimal
         run: |
           git clone https://github.com/ggml-org/llama.cpp.git
           cd llama.cpp
-          cmake -B build-metal -G Ninja -DGGML_METAL=ON
+          cmake -B build-metal -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_METAL=ON \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=OFF
           cmake --build build-metal -j3
 
       - name: Download GGUF model
@@ -41,7 +54,7 @@ jobs:
           )
           PY
 
-      - name: Benchmark llama.cpp Metal
+      - name: Run llama.cpp Metal smoke test
         run: |
           cd llama.cpp
           ./build-metal/bin/llama-bench \
@@ -49,15 +62,16 @@ jobs:
             -p 512 \
             -n 128 \
             -ngl 99 \
-            -o json | tee ../llama_metal.json
+            -o json | tee ../results/llama_metal_ci.json
 
-      - name: Benchmark MLX
+      - name: Run MLX smoke test
         run: |
           source .venv/bin/activate
 
           cat > run_mlx_bench.py <<'PY'
           import time
           import json
+          import platform
           from mlx_lm import load, generate
 
           model_id = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
@@ -76,22 +90,34 @@ jobs:
 
           avg_s = sum(times) / len(times)
 
-          print(json.dumps({
-              "backend": "mlx_metal",
+          result = {
+              "note": "GitHub Actions macOS runners use virtualized Apple Silicon / paravirtual Metal. Treat this as CI validation, not representative hardware performance.",
+              "backend": "mlx_metal_ci",
               "model": model_id,
+              "platform": platform.platform(),
+              "machine": platform.machine(),
               "generated_tokens": 128,
               "avg_total_seconds": avg_s,
               "approx_decode_tok_s": 128 / avg_s,
               "runs": times
-          }, indent=2))
+          }
+
+          print(json.dumps(result, indent=2))
           PY
 
-          python run_mlx_bench.py | tee mlx_metal.json
+          python run_mlx_bench.py | tee results/mlx_metal_ci.json
 
-      - name: Upload benchmark results
+      - name: Write README note
+        run: |
+          cat > results/README.txt <<'TXT'
+          These results are CI smoke-test outputs from GitHub Actions macOS.
+          They validate that the benchmark pipeline builds and runs.
+          They should not be interpreted as representative physical M1/M2/M3 performance,
+          because the runner reports virtualized Apple Silicon / paravirtual Metal.
+          TXT
+
+      - name: Upload smoke-test results
         uses: actions/upload-artifact@v4
         with:
-          name: m1-benchmark-results
-          path: |
-            llama_metal.json
-            mlx_metal.json
+          name: apple-silicon-ci-smoke-test-results
+          path: results/
