@@ -1,3 +1,4 @@
+```yaml
 name: M1 MLX vs Metal benchmark
 
 on:
@@ -14,8 +15,11 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja git
-          python3 -m pip install --upgrade pip
-          python3 -m pip install huggingface_hub mlx mlx-lm
+
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install huggingface_hub mlx mlx-lm
 
       - name: Build llama.cpp Metal
         run: |
@@ -26,9 +30,11 @@ jobs:
 
       - name: Download GGUF model
         run: |
+          source .venv/bin/activate
           mkdir -p llama.cpp/models
-          python3 - <<'PY'
+          python - <<'PY'
           from huggingface_hub import hf_hub_download
+
           hf_hub_download(
               repo_id="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
               filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
@@ -48,8 +54,11 @@ jobs:
 
       - name: Benchmark MLX
         run: |
+          source .venv/bin/activate
+
           cat > run_mlx_bench.py <<'PY'
-          import time, json
+          import time
+          import json
           from mlx_lm import load, generate
 
           model_id = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
@@ -57,7 +66,6 @@ jobs:
 
           model, tokenizer = load(model_id)
 
-          # Warmup
           generate(model, tokenizer, prompt=prompt, max_tokens=16, verbose=False)
 
           times = []
@@ -68,6 +76,7 @@ jobs:
               times.append(end - start)
 
           avg_s = sum(times) / len(times)
+
           print(json.dumps({
               "backend": "mlx_metal",
               "model": model_id,
@@ -78,7 +87,7 @@ jobs:
           }, indent=2))
           PY
 
-          python3 run_mlx_bench.py | tee mlx_metal.json
+          python run_mlx_bench.py | tee mlx_metal.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -87,3 +96,4 @@ jobs:
           path: |
             llama_metal.json
             mlx_metal.json
+```
