@@ -1,0 +1,89 @@
+name: M1 MLX vs Metal benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja git
+          python3 -m pip install --upgrade pip
+          python3 -m pip install huggingface_hub mlx mlx-lm
+
+      - name: Build llama.cpp Metal
+        run: |
+          git clone https://github.com/ggml-org/llama.cpp.git
+          cd llama.cpp
+          cmake -B build-metal -G Ninja -DGGML_METAL=ON
+          cmake --build build-metal -j3
+
+      - name: Download GGUF model
+        run: |
+          mkdir -p llama.cpp/models
+          python3 - <<'PY'
+          from huggingface_hub import hf_hub_download
+          hf_hub_download(
+              repo_id="Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+              filename="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+              local_dir="llama.cpp/models"
+          )
+          PY
+
+      - name: Benchmark llama.cpp Metal
+        run: |
+          cd llama.cpp
+          ./build-metal/bin/llama-bench \
+            -m models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+            -p 512 \
+            -n 128 \
+            -ngl 99 \
+            -o json | tee ../llama_metal.json
+
+      - name: Benchmark MLX
+        run: |
+          cat > run_mlx_bench.py <<'PY'
+          import time, json
+          from mlx_lm import load, generate
+
+          model_id = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
+          prompt = "Explain performance portability in local LLM inference in one paragraph."
+
+          model, tokenizer = load(model_id)
+
+          # Warmup
+          generate(model, tokenizer, prompt=prompt, max_tokens=16, verbose=False)
+
+          times = []
+          for _ in range(5):
+              start = time.perf_counter()
+              generate(model, tokenizer, prompt=prompt, max_tokens=128, verbose=False)
+              end = time.perf_counter()
+              times.append(end - start)
+
+          avg_s = sum(times) / len(times)
+          print(json.dumps({
+              "backend": "mlx_metal",
+              "model": model_id,
+              "generated_tokens": 128,
+              "avg_total_seconds": avg_s,
+              "approx_decode_tok_s": 128 / avg_s,
+              "runs": times
+          }, indent=2))
+          PY
+
+          python3 run_mlx_bench.py | tee mlx_metal.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: m1-benchmark-results
+          path: |
+            llama_metal.json
+            mlx_metal.json
