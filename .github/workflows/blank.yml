@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install huggingface_hub mlx mlx-lm
 
-      - name: Build llama.cpp Metal minimal
+      - name: Build llama.cpp Metal llama-bench only
         run: |
           git clone https://github.com/ggml-org/llama.cpp.git
           cd llama.cpp
@@ -38,7 +38,7 @@ jobs:
             -DLLAMA_BUILD_TESTS=OFF \
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=OFF
-          cmake --build build-metal -j3
+          cmake --build build-metal --target llama-bench -j3
 
       - name: Download GGUF model
         run: |
